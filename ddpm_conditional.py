@@ -5,22 +5,23 @@ It is based on @dome272.
 @wandbcode{condition_diffusion}
 """
 
-import argparse, logging, copy
-from types import SimpleNamespace
+import argparse
+import copy
+import logging
 from contextlib import nullcontext
+from types import SimpleNamespace
 
-import torch
-from torch import optim
-import torch.nn as nn
 import numpy as np
+import torch
+import torch.nn as nn
 from fastprogress import progress_bar
+from torch import optim
 
 import wandb
+from modules import EMA, UNet_conditional
 from utils import *
-from modules import UNet_conditional, EMA
 
-
-config = SimpleNamespace(    
+config = SimpleNamespace(
     run_name = "DDPM_conditional",
     epochs = 100,
     noise_steps=1000,
@@ -62,7 +63,7 @@ class Diffusion:
 
     def prepare_noise_schedule(self):
         return torch.linspace(self.beta_start, self.beta_end, self.noise_steps)
-    
+
     def sample_timesteps(self, n):
         return torch.randint(low=1, high=self.noise_steps, size=(n,))
 
@@ -72,7 +73,7 @@ class Diffusion:
         sqrt_one_minus_alpha_hat = torch.sqrt(1 - self.alpha_hat[t])[:, None, None, None]
         Ɛ = torch.randn_like(x)
         return sqrt_alpha_hat * x + sqrt_one_minus_alpha_hat * Ɛ, Ɛ
-    
+
     @torch.inference_mode()
     def sample(self, use_ema, labels, cfg_scale=3):
         model = self.ema_model if use_ema else self.model
@@ -127,7 +128,7 @@ class Diffusion:
                 self.train_step(loss)
                 wandb.log({"train_mse": loss.item(),
                             "learning_rate": self.scheduler.get_last_lr()[0]})
-            pbar.comment = f"MSE={loss.item():2.3f}"        
+            pbar.comment = f"MSE={loss.item():2.3f}"
         return avg_loss.mean().item()
 
     def log_images(self):
@@ -142,8 +143,8 @@ class Diffusion:
         wandb.log({"ema_sampled_images": [wandb.Image(img.permute(1,2,0).squeeze().cpu().numpy()) for img in ema_sampled_images]})
 
     def load(self, model_cpkt_path, model_ckpt="ckpt.pt", ema_model_ckpt="ema_ckpt.pt"):
-        self.model.load_state_dict(torch.load(os.path.join(model_cpkt_path, model_ckpt)))
-        self.ema_model.load_state_dict(torch.load(os.path.join(model_cpkt_path, ema_model_ckpt)))
+        self.model.load_state_dict(torch.load(os.path.join(model_cpkt_path, model_ckpt), map_location=self.device))
+        self.ema_model.load_state_dict(torch.load(os.path.join(model_cpkt_path, ema_model_ckpt), map_location=self.device))
 
     def save_model(self, run_name, epoch=-1):
         "Save model locally and on wandb"
@@ -158,7 +159,7 @@ class Diffusion:
         mk_folders(args.run_name)
         self.train_dataloader, self.val_dataloader = get_data(args)
         self.optimizer = optim.AdamW(self.model.parameters(), lr=args.lr, eps=1e-5)
-        self.scheduler = optim.lr_scheduler.OneCycleLR(self.optimizer, max_lr=args.lr, 
+        self.scheduler = optim.lr_scheduler.OneCycleLR(self.optimizer, max_lr=args.lr,
                                                  steps_per_epoch=len(self.train_dataloader), epochs=args.epochs)
         self.mse = nn.MSELoss()
         self.ema = EMA(0.995)
@@ -168,12 +169,12 @@ class Diffusion:
         for epoch in progress_bar(range(args.epochs), total=args.epochs, leave=True):
             logging.info(f"Starting epoch {epoch}:")
             _  = self.one_epoch(train=True)
-            
+
             ## validation
             if args.do_validation:
                 avg_loss = self.one_epoch(train=False)
                 wandb.log({"val_mse": avg_loss})
-            
+
             # log predicitons
             if epoch % args.log_every_epoch == 0:
                 self.log_images()
@@ -198,7 +199,7 @@ def parse_args(config):
     parser.add_argument('--slice_size', type=int, default=config.slice_size, help='slice size')
     parser.add_argument('--noise_steps', type=int, default=config.noise_steps, help='noise steps')
     args = vars(parser.parse_args())
-    
+
     # update config with parsed args
     for k, v in args.items():
         setattr(config, k, v)
